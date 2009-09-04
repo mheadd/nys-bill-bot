@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ccxml version="1.0" xmlns="http://www.w3.org/2002/09/ccxml">
+
+<!-- 
+ Copyright 2009 Mark J. Headd
+  
+ This file is part of IMBills
+  
+ IMBills is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ IMBills is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+  
+ You should have received a copy of the GNU General Public License
+ along with IMBills.  If not, see http://www.gnu.org/licenses/.
+ -->
+
+<var name="app_state" expr="'initial'"/>
+<var name="session_id"/> 
+<var name="connection_id"/>
+<var name="caller_number"/>
+
+<var name="errorCounter" expr="0"/>
+<var name="billPrefix"/>
+<var name="billNumber"/>
+<var name="billSponsor"/>
+<var name="lastAction"/>
+
+<script>
+<![CDATA[
+
+// Simple array to hold bill types.
+var billType = new Array();
+billType[1] = 'S';
+billType[2] = 'A';
+
+// A function to insert spaces in the bill ID, to improve TTS readback.
+function insertSpaces(billNumber) {
+
+var billNumberWithSpaces = '';
+var billArray = billNumber.split('');
+	for (var i=1; i<billArray.length; i++) {
+		billNumberWithSpaces += billArray[i] + " ";
+	}	
+	
+	return billNumberWithSpaces;
+}
+
+// Function to format the bill prefix for improved TTS readback
+function makePhonetic(prefix) {
+ if (prefix == 'A') {
+ 	return 'Aee';
+ }
+ return 'Ess';
+}
+
+]]>
+</script>
+
+<eventprocessor statevariable="app_state">
+
+	<transition state="initial" event="ccxml.loaded">
+		<log expr="'*** Document has loaded. ***'"/>
+		<assign name="session_id" expr="event$.sessionid"/>
+		<send target="session_id" name="'sessionEnd'" delay="'300s'"/>
+	</transition>
+	
+	<!-- The inbound call is rining. Accept the call. -->
+	<transition state="initial" event="connection.alerting">
+		<assign name="app_state" expr="'accepting'"/>
+		<assign name="caller_number" expr="event$.connection.remote"/>
+		<assign name="connection_id" expr="event$.connection.connectionid"/>
+		<accept/>
+	</transition>
+	
+	<!-- Inbound call is conntected. -->
+	<transition state="accepting" event="connection.connected">
+		<log expr="'*** Call is connected. ***'"/>
+		<assign name="app_state" expr="'connected'"/>
+		<send target="session_id" name="'startFirstDialog'" delay="'1s'"/>
+	</transition>
+	
+	<!-- Prompt the caller for the type of bill the want to search for. -->
+	<transition state="connected" event="startFirstDialog">
+		<if cond="errorCounter &gt; 2">
+			<log expr="'*** User exceeded maximum errors allowed. ***'"/>
+			<exit/>
+		<else/>
+			<assign name="app_state" expr="'getBillType'"/>
+			<dialogstart src="'null://?termdigits=12&amp;voice=English-Male4&amp;text=What type of bill are you interested in. For a Senate bill, press 1. For an Assembly bill, press 2.'" connectionid="connection_id" type="'application/x-fetchdigits'"/>
+		</if>
+	</transition>
+	
+	<!-- Get the numberic portion of the bill. -->
+	<transition state="getBillType" event="dialog.exit">
+		<if cond="errorCounter &gt; 2">
+			<log expr="'*** User exceeded maximum errors allowed. ***'"/>
+			<exit/>
+		<else/>
+			<if cond="typeof(event$.values.termdigit) == 'undefined'">
+				<log expr="'*** No user input. ***'"/>
+				<assign name="errorCounter" expr="errorCounter+1"/>
+				<assign name="app_state" expr="'connected'"/>
+				<send target="session_id" name="'startFirstDialog'"/>
+			<else/>
+				<assign name="errorCounter" expr="0"/>
+				<assign name="billPrefix" expr="billType[event$.values.termdigit]"/>
+				<assign name="app_state" expr="'getBillNumber'"/>
+				<dialogstart src="'null://?termdigits=#&amp;voice=English-Male4&amp;text=Enter the numeric portion of the bill you are looking for, followed by the pound sign.'" connectionid="connection_id" type="'application/x-fetchdigits'"/>
+			</if>
+		</if>	
+	</transition>
+	
+	<!-- If there is no input, reprompt for the numberic portion of the bill. -->
+	<transition state="getBillType" event="rePrompt">
+		<if cond="errorCounter &gt; 2">
+			<log expr="'*** User exceeded maximum errors allowed. ***'"/>
+			<exit/>
+		<else/>
+			<dialogstart src="'null://?termdigits=#&amp;voice=English-Male4&amp;text=Enter the numeric portion of the bill you are looking for, followed by the pound sign.'" connectionid="connection_id" type="'application/x-fetchdigits'"/>
+		</if>
+	</transition>
+	
+	<!-- Prompt the caller to hold while the bill lookup occurs -->
+	<transition state="getBillNumber" event="dialog.exit">
+		<if cond="errorCounter &gt; 2">
+				<log expr="'*** User exceeded maximum errors allowed. ***'"/>
+				<exit/>
+		<else/>
+			<if cond="typeof(event$.values.digits) == 'undefined'">
+				<log expr="'*** No user input. ***'"/>
+				<assign name="errorCounter" expr="errorCounter+1"/>
+				<assign name="app_state" expr="'getBillType'"/>
+				<send target="session_id" name="'rePrompt'"/>
+			<else/>
+				<assign name="errorCounter" expr="0"/>
+				<assign name="billNumber" expr="billPrefix + event$.values.digits"/>
+				<assign name="app_state" expr="'promptUserToHold'"/>
+				<dialogstart src="'null://?voice=English-Male4&amp;text=Hold on while I look up that bill for you.'" connectionid="connection_id" type="'application/x-texttospeech'"/>
+			</if>	
+		</if>		
+	</transition>
+	
+	<!-- Do the bill lookup. -->
+	<transition state="promptUserToHold" event="dialog.exit">
+		<log expr="'*** Looking up bill: ' + billNumber + ' . ***'"/>
+		<assign name="app_state" expr="'getBillInfo'"/>
+		<send name="'lookUpBillStatus'" target="'http://voiceingov.org/tutorials/imbills/index.php'" targettype="'basichttp'" namelist="billNumber"/>
+	</transition>
+	
+ 	<!-- TO DO: Play hold music to the caller if the bill lookup takes to long. We don't want any hangups! -->
+ 	<transition state="getBillInfo" event="send.successful">
+ 		<log expr="'*** Play hold music. ***'"/>
+ 	</transition>
+ 	
+ 	<!--  Could not look up the bill inforamtion. -->
+ 	<transition state="getBillInfo" event="error.send.failed">
+		<log expr="'*** Houston, we have a problem. ***'"/>
+		<exit/>
+	</transition>
+	
+	<!-- Read the bill details out to the caller.  -->
+	<transition state="getBillInfo" event="billInfoLookupSuccess">
+		<log expr="'*** Read back the bill information to the caller *** '"/>
+		<assign name="billSponsor" expr="event$.billSponsor.toLowerCase()"/>
+		<assign name="lastAction" expr="event$.lastAction.toLowerCase()"/>
+		<assign name="app_state" expr="'playBackBillInfo'"/>		
+		<dialogstart src="'null://?voice=English-Male4&amp;text=Bill number, ' + makePhonetic(billPrefix) + ' ' + insertSpaces(billNumber) + ', Sponsored by ' + billSponsor +  ', last action ' + lastAction + '.'" 
+					 connectionid="connection_id" 
+					 type="'application/x-texttospeech'"/>
+	</transition>
+	
+	<!-- Repeat the bill information. -->
+	<transition state="getBillInfo" event="repeatReadBack">
+		<log expr="'*** Repeat the bill information. *** '"/>
+		<assign name="app_state" expr="'RepeatBillInfo'"/>	
+		<dialogstart src="'null://?voice=English-Male4&amp;text=Bill number, ' + makePhonetic(billPrefix) + ' ' + insertSpaces(billNumber) + ', Sponsored by ' + billSponsor +  ', last action ' + lastAction + '.'" 
+					 connectionid="connection_id" 
+					 type="'application/x-texttospeech'"/>
+	</transition>
+	
+	<!-- Play a repeat menu to the caller. -->
+	<transition state="playBackBillInfo RepeatBillInfo" event="dialog.exit">
+		<assign name="app_state" expr="'repeatMenu'"/>
+		<dialogstart src="'null://?termdigits=129&amp;voice=English-Male4&amp;text=To hear this information again, press 1. To look up another bill, press 2. To end this call, press 9.'" connectionid="connection_id" type="'application/x-fetchdigits'"/>
+	</transition>
+	
+	<!-- Based on the caller's entry, repeat, search for a new bill or end the call. -->
+	<transition state="repeatMenu" event="dialog.exit">
+		<if cond="typeof(event$.values.termdigit) == 'undefined' || event$.values.termdigit == 9">
+			<log expr="'*** Hanging up. ***'"/>
+			<exit/>
+		<elseif cond="event$.values.termdigit == 1"/>
+			<assign name="app_state" expr="'getBillInfo'"/>
+			<send target="session_id" name="'repeatReadBack'"/>
+		<else/>
+			<assign name="app_state" expr="'connected'"/>
+			<send target="session_id" name="'startFirstDialog'"/>
+		</if>	
+	</transition>
+	
+	<transition state="getBillInfo" event="billInfoLookupFailure">
+		<log expr="'*** ERROR: ' + event$.reason + ' ***'"/>
+		<assign name="app_state" expr="'getBillInfoFailure'"/>
+		<dialogstart src="'null://?voice=English-Male4&amp;text=Sorry. ' + event$.reason" connectionid="connection_id" type="'application/x-texttospeech'"/>
+	</transition>
+	
+	<transition state="getBillInfoFailure" event="dialog.exit">
+		<assign name="app_state" expr="'startSearchOver'"/>
+		<dialogstart src="'null://?termdigits=19&amp;voice=English-Male4&amp;text=To look up another bill, press 1. To end this call, press 9.'" connectionid="connection_id" type="'application/x-fetchdigits'"/>
+	</transition>
+	
+	<transition state="startSearchOver" event="dialog.exit">
+		<if cond="typeof(event$.values.termdigit) == 'undefined' || event$.values.termdigit == 9">
+			<log expr="'*** Hanging up. ***'"/>
+			<exit/>
+		<else/>
+			<assign name="app_state" expr="'connected'"/>
+			<send target="session_id" name="'startFirstDialog'"/>
+		</if>
+	</transition>
+	
+	<transition event="error.*">
+		<log expr="'*** An error has occured: ' + event$.reason + '.  ***'"/>
+		<exit/>
+	</transition>
+	
+	<transition event="connection.disconnected">
+		<log expr="'*** Caller hung up the phone. ***'"/>
+		<exit/>
+	</transition>
+	 
+	<transition event="sessionEnd">
+		<exit/>
+	</transition>
+ 
+</eventprocessor>
+</ccxml>
