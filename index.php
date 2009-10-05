@@ -25,7 +25,7 @@ function __autoload($class_name) {
 }
 
 // Constants used to invoke APIs.
-define("API_URL_BASE", "http://open.nysenate.gov/openleg/api/1.0/bills/id/summary/");
+define("API_URL_BASE", "http://open.nysenate.gov/openleg/api/1.0/xml/bill/");
 define("CLIGS_ENDPOINT", "http://cli.gs/api/v1/cligs/create");
 
 // Constant used to build URL reference to bill text.
@@ -34,6 +34,7 @@ define("BILL_SUMMARY_URL_BASE", "http://open.nysenate.gov/openleg/api/html/bill/
 // Constants defining user agent strings to format output for different clients.
 define("IM_SMS_TXT_USER_AGENT_STRING", "Railo (CFML Engine)");
 define("VOICE_USER_AGENT_STRING", "Voxeo-VCS/8.0");
+define("DEBUGGER_USER_AGENT_STRING", "IMified/debugger");
 
 // Standard prefixs for error messages.
 define("IM_SMS_TXT_USER_AGENT_ERROR_PREFIX", "An error occured. ");
@@ -46,7 +47,7 @@ define("VOICE_USER_AGENT_ERROR_PREFIX", "billInfoLookupFailure\nreason=");
 */
 
 // Function to format a response for text-based user agents.
-function formatTextResponse($postArray) {
+function formatTextResponse() {
 	
 	// Set up the bot object and get the bill number submitted by the user.
 	$billBot = new imified($_POST);
@@ -54,7 +55,7 @@ function formatTextResponse($postArray) {
   
   	// Make sure its a Senate or Assembly bill.
   	if(!validateBillPrefix($billNumber)) {
-  		throw new billFormatException("Bill must be prefixed with an 'S' or an 'A'.", 0);
+  		throw new billFormatException("Bill must be prefixed with an alphabetic character.", 0);
   	}
   	
   	try {
@@ -92,15 +93,15 @@ function formatTextResponse($postArray) {
 }
 
 // Function to format a response for voice-based user agents.
-function formatVoiceResponse($billNumber) {
+function formatVoiceResponse() {
 	
 	// Make sure its a Senate or Assembly bill.
-  	if(!validateBillPrefix($billNumber)) {
-  		throw new billFormatException("Bill must be prefixed with an 'S' or an 'A'.", 1);
+  	if(!validateBillPrefix($_POST['billNumber'])) {
+  		throw new billFormatException("Bill must be prefixed with an alphabetic character.", 1);
   	}
   		
   	try {
-  		$xml = new SimpleXmlElement(lookUpBIllInfo($billNumber));
+  		$xml = new SimpleXmlElement(lookUpBIllInfo($_POST['billNumber']));
   		// Get the sponsor name.
   		$sponsorInfo = $xml->xpath('//bill/@sponsor');
   		$billSponsor = $sponsorInfo[0];
@@ -145,7 +146,7 @@ function lookUpBIllInfo($billNumber) {
 
 // Function to check the bill number submitted by the user.
 function validateBillPrefix($billNumber) {
-	if(strtoupper(substr($billNumber,0,1)) == 'S' || strtoupper(substr($billNumber,0,1)) == 'A') {
+	if(preg_match("/^[a-zA-Z]/", $billNumber)) {
 		return true;
 	}
 	return false;
@@ -181,11 +182,11 @@ function formatExceptionMessage($message, $code) {
 try {
 	
 	// Determine user agent making the request
-	if ($_SERVER['HTTP_USER_AGENT'] == IM_SMS_TXT_USER_AGENT_STRING) {
-		echo formatTextResponse($_POST);
+	if ($_SERVER['HTTP_USER_AGENT'] == IM_SMS_TXT_USER_AGENT_STRING || $_SERVER['HTTP_USER_AGENT'] == DEBUGGER_USER_AGENT_STRING) {
+		echo formatTextResponse();
 	}
 	else if ($_SERVER['HTTP_USER_AGENT'] == VOICE_USER_AGENT_STRING) {
-		echo formatVoiceResponse($_POST['billNumber']);
+		echo formatVoiceResponse();
 	}
 	else {
 		throw new invalidUserAgentException("The application can not accept requests from user agent type: ".$_SERVER['HTTP_USER_AGENT'], 0);
