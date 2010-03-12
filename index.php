@@ -25,7 +25,7 @@ function __autoload($class_name) {
 }
 
 // Constants used to invoke APIs.
-define("API_URL_BASE", "http://open.nysenate.gov/openleg/api/1.0/xml/bill/");
+define("API_URL_BASE", "http://open.nysenate.gov/legislation/api/1.0/xml/bill/");
 define("CLIGS_ENDPOINT", "http://cli.gs/api/v1/cligs/create");
 
 // Constant used to build URL reference to bill text.
